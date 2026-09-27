@@ -14,7 +14,16 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.api.dependencies import COOKIE, CurrentUser, Database, client_host, require_origin
 from app.config import get_settings
-from app.db.models import AuditEvent, LibraryGrant, LoginSession, PermissionRole, RateLimit, User
+from app.db.models import (
+    AuditEvent,
+    LibraryGrant,
+    LoginSession,
+    OidcIdentity,
+    PermissionRole,
+    PlexIdentity,
+    RateLimit,
+    User,
+)
 from app.domain import library_access
 from app.domain.permissions import (
     ADMIN,
@@ -81,6 +90,8 @@ class UserView(BaseModel):
     permission_role_id: str | None = None
     onboarding_status: str = "pending"
     library_ids: list[UUID] | None = None
+    has_password: bool = False
+    oidc_linked: bool = False
 
 
 class AuthView(BaseModel):
@@ -99,10 +110,19 @@ async def named_user_view(db: Database, user: User) -> UserView:
         role_name = await db.scalar(
             select(PermissionRole.name).where(PermissionRole.id == user.permission_role_id)
         )
-    return user_view(user, role_name)
+    oidc_linked = bool(
+        await db.scalar(select(OidcIdentity.user_id).where(OidcIdentity.user_id == user.id))
+    )
+    return user_view(user, role_name, oidc_linked=oidc_linked)
 
 
-def user_view(user: User, role_name: str | None = None, *, library_ids=None) -> UserView:
+def user_view(
+    user: User,
+    role_name: str | None = None,
+    *,
+    library_ids=None,
+    oidc_linked: bool = False,
+) -> UserView:
     return UserView(
         id=str(user.id),
         username=user.username,
@@ -115,6 +135,8 @@ def user_view(user: User, role_name: str | None = None, *, library_ids=None) -> 
         permission_role_id=str(user.permission_role_id) if user.permission_role_id else None,
         onboarding_status=(user.onboarding or {}).get("status", "pending"),
         library_ids=library_ids,
+        has_password=user.password_hash is not None,
+        oidc_linked=oidc_linked,
     )
 
 
@@ -330,13 +352,26 @@ async def users(actor: CurrentUser, db: Database):
             select(LibraryGrant.user_id, LibraryGrant.library_id).order_by(LibraryGrant.library_id)
         ):
             grants.setdefault(user_id, []).append(library_id)
+    people = (
+        await db.scalars(
+            select(User)
+            .where(User.onboarding["status"].astext != "deleted")
+            .order_by(User.username)
+        )
+    ).all()
+    oidc_users = set(
+        await db.scalars(
+            select(OidcIdentity.user_id).where(OidcIdentity.user_id.in_([user.id for user in people]))
+        )
+    )
     return [
         user_view(
             user,
             roles.get(user.permission_role_id),
             library_ids=grants.get(user.id, []) if actor.role == "admin" else None,
+            oidc_linked=user.id in oidc_users,
         )
-        for user in (await db.scalars(select(User).order_by(User.username))).all()
+        for user in people
     ]
 
 
@@ -384,6 +419,71 @@ async def create_user(body: UserInput, actor: CurrentUser, db: Database):
     db.add(AuditEvent(actor_id=actor_id, action="user.created", entity_id=user.id))
     await db.commit()
     return user_view(user, role.name if role else None, library_ids=libraries)
+
+
+@router.delete("/users/{user_id}/oidc", status_code=204)
+async def unlink_user_oidc(user_id: UUID, actor: CurrentUser, db: Database):
+    require_user_manager(actor)
+    user = await db.get(User, user_id, with_for_update=True)
+    if not user or (user.onboarding or {}).get("status") == "deleted":
+        raise HTTPException(404, "Account not found")
+    guard_admin_target(actor, user)
+    identity = await db.get(OidcIdentity, user.id)
+    if not identity:
+        raise HTTPException(404, "This account is not linked to the identity provider")
+    plex_linked = bool(
+        await db.scalar(select(PlexIdentity.user_id).where(PlexIdentity.user_id == user.id))
+    )
+    if user.password_hash is None and not plex_linked:
+        raise HTTPException(409, "Add another sign-in method before unlinking the identity provider")
+    await db.delete(identity)
+    db.add(
+        AuditEvent(
+            actor_id=actor.id,
+            action="user.oidc.unlinked",
+            entity_id=user.id,
+        )
+    )
+    await db.commit()
+
+
+@router.delete("/users/{user_id}", status_code=204)
+async def delete_user(user_id: UUID, actor: CurrentUser, db: Database):
+    require_user_manager(actor)
+    if user_id == actor.id:
+        raise HTTPException(409, "You cannot remove your own account")
+    user = await db.get(User, user_id, with_for_update=True)
+    if not user or (user.onboarding or {}).get("status") == "deleted":
+        raise HTTPException(404, "Account not found")
+    guard_admin_target(actor, user)
+    if user.role == "admin" and user.active:
+        await guard_admin_loss(db, [(user, 0)])
+
+    old_username = user.username
+    await db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
+    await db.execute(delete(OidcIdentity).where(OidcIdentity.user_id == user.id))
+    await db.execute(delete(PlexIdentity).where(PlexIdentity.user_id == user.id))
+    await db.execute(delete(LibraryGrant).where(LibraryGrant.user_id == user.id))
+
+    user.username = f"deleted-{user.id}"
+    user.display_name = "Deleted user"
+    user.password_hash = None
+    user.email = None
+    user.role = "member"
+    user.active = False
+    user.can_automate = False
+    user.permissions = 0
+    user.permission_role_id = None
+    user.onboarding = {"status": "deleted", "step": 0, "skipped": []}
+    db.add(
+        AuditEvent(
+            actor_id=actor.id,
+            action="user.deleted",
+            entity_id=user.id,
+            detail={"username": old_username},
+        )
+    )
+    await db.commit()
 
 
 class AutomationPermissionInput(BaseModel):
