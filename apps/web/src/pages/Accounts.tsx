@@ -1060,16 +1060,6 @@ function AddUserDialog({
           )}
           <Notice error={create.error} />
           <div className="access-form-actions">
-            {held === null && user.id !== selfId && (
-              <button
-                type="button"
-                className="access-delete"
-                disabled={busy}
-                onClick={() => setConfirming("delete")}
-              >
-                Remove account
-              </button>
-            )}
             <button type="button" onClick={requestClose}>
               Cancel
             </button>
@@ -1391,6 +1381,16 @@ function EditUserDialog({
             </div>
           )}
           <div className="access-form-actions">
+            {held === null && user.id !== selfId && (
+              <button
+                type="button"
+                className="access-delete"
+                disabled={busy}
+                onClick={() => setConfirming("delete")}
+              >
+                Remove account
+              </button>
+            )}
             <button type="button" onClick={requestClose}>
               Cancel
             </button>
