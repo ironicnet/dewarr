@@ -1060,6 +1060,16 @@ function AddUserDialog({
           )}
           <Notice error={create.error} />
           <div className="access-form-actions">
+            {held === null && user.id !== selfId && (
+              <button
+                type="button"
+                className="access-delete"
+                disabled={busy}
+                onClick={() => setConfirming("delete")}
+              >
+                Remove account
+              </button>
+            )}
             <button type="button" onClick={requestClose}>
               Cancel
             </button>
@@ -1099,6 +1109,7 @@ function EditUserDialog({
   const [roleId, setRoleId] = useState<string | null>(
     user.permission_role_id ?? null,
   );
+  const [confirming, setConfirming] = useState<"delete" | "oidc" | null>(null);
   const key = roleId ?? presetKey(catalog, selected) ?? "";
   const preset = catalog.presets.find((item) => `preset:${item.id}` === key);
   const role = catalog.roles.find((item) => item.id === roleId);
@@ -1129,6 +1140,34 @@ function EditUserDialog({
       close();
     },
   });
+  const unlinkOidc = useMutation({
+    mutationFn: async () =>
+      result(
+        await api.DELETE("/api/auth/users/{user_id}/oidc", {
+          params: { path: { user_id: user.id } },
+        }),
+      ),
+    onSuccess: () => {
+      setUser((current) => ({ ...current, oidc_linked: false }));
+      client.invalidateQueries({ queryKey: ["accounts"] });
+      setConfirming(null);
+    },
+  });
+  const remove = useMutation({
+    mutationFn: async () =>
+      result(
+        await api.DELETE("/api/auth/users/{user_id}", {
+          params: { path: { user_id: user.id } },
+        }),
+      ),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["accounts"] }),
+        client.invalidateQueries({ queryKey: ["libraries"] }),
+      ]);
+      close();
+    },
+  });
   const reload = useMutation({
     mutationFn: async () => {
       const [people, catalogData] = await Promise.all([
@@ -1153,7 +1192,8 @@ function EditUserDialog({
       save.reset();
     },
   });
-  const busy = save.isPending || reload.isPending;
+  const busy =
+    save.isPending || reload.isPending || unlinkOidc.isPending || remove.isPending;
   const dirty =
     !sameIds(selected, user.permissions) ||
     roleId !== (user.permission_role_id ?? null) ||
@@ -1266,7 +1306,75 @@ function EditUserDialog({
               }}
             />
           </details>
-          <Notice error={save.error || reload.error} />
+          {held === null && (
+            <div className="access-advanced">
+              <strong>Sign-in methods</strong>
+              <p className="access-hint">
+                {[
+                  user.has_password ? "Password" : null,
+                  user.oidc_linked ? "Identity provider" : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || "No sign-in method"}
+              </p>
+              {user.oidc_linked && (
+                <button
+                  type="button"
+                  className="access-delete"
+                  disabled={busy}
+                  onClick={() => setConfirming("oidc")}
+                >
+                  Unlink identity provider
+                </button>
+              )}
+            </div>
+          )}
+          <Notice
+            error={save.error || reload.error || unlinkOidc.error || remove.error}
+          />
+          {confirming === "oidc" && (
+            <div className="access-confirm">
+              <p>
+                Unlink the identity provider from {user.display_name}? The
+                account and its access stay unchanged.
+              </p>
+              <div className="access-form-actions">
+                <button type="button" onClick={() => setConfirming(null)}>
+                  Keep linked
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => unlinkOidc.mutate()}
+                >
+                  {unlinkOidc.isPending ? "Unlinking…" : "Unlink provider"}
+                </button>
+              </div>
+            </div>
+          )}
+          {confirming === "delete" && (
+            <div className="access-confirm">
+              <p>
+                Remove {user.display_name}? They will be signed out and lose
+                all sign-in methods and library access. Historical activity is
+                kept.
+              </p>
+              <div className="access-form-actions">
+                <button type="button" onClick={() => setConfirming(null)}>
+                  Keep account
+                </button>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy}
+                  onClick={() => remove.mutate()}
+                >
+                  {remove.isPending ? "Removing…" : "Remove account"}
+                </button>
+              </div>
+            </div>
+          )}
           {conflict && (
             <div className="access-conflict">
               <p>
