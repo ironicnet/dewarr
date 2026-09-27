@@ -5,6 +5,9 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from app.db.models import User
+from app.security import hash_password
+
 pytestmark = pytest.mark.integration
 
 
@@ -251,3 +254,46 @@ async def test_unknown_and_unshared_accounts_are_rejected(admin, client, plex):
     unshared = await client.get("/api/auth/plex/callback")
     assert "plex_error=rejected" in unshared.headers["location"]
     assert "other-secret" not in unshared.headers["location"]
+
+
+async def test_admin_can_unlink_plex_when_another_sign_in_method_remains(
+    admin, client, database, plex
+):
+    await client.get("/api/auth/plex/link")
+    await client.get("/api/auth/plex/callback")
+    await client.put(
+        "/api/auth/plex/settings",
+        json={
+            "enabled": True,
+            "machine_id": "abcdef1234",
+            "auto_register": True,
+            "default_role": "member",
+        },
+    )
+    client.cookies.clear()
+    await client.get("/api/auth/plex/start")
+    callback = await client.get("/api/auth/plex/callback")
+    await finish_sign_in(client, callback)
+    plex_user = (await client.get("/api/auth/me")).json()["user"]
+
+    client.cookies.clear()
+    admin_login = await client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "a long test password"},
+    )
+    client.headers["X-CSRF-Token"] = admin_login.json()["csrf_token"]
+
+    blocked = await client.delete(f"/api/auth/users/{plex_user['id']}/plex")
+    assert blocked.status_code == 409
+    assert "another sign-in method" in blocked.json()["detail"]
+
+    async with database() as db:
+        user = await db.get(User, plex_user["id"])
+        user.password_hash = hash_password("a long reader password")
+        await db.commit()
+
+    users = (await client.get("/api/auth/users")).json()
+    reader = next(user for user in users if user["id"] == plex_user["id"])
+    assert reader["login_methods"] == ["password", "plex"]
+    unlinked = await client.delete(f"/api/auth/users/{plex_user['id']}/plex")
+    assert unlinked.status_code == 204

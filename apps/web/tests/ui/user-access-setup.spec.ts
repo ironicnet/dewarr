@@ -92,6 +92,7 @@ test("add and edit a person with their role and libraries in one save", async ({
     },
   ];
   const writes: { path: string; body: any }[] = [];
+  const deletes: string[] = [];
   let conflict = false;
   await page.route("**/api/**", (route) => {
     const request = route.request();
@@ -133,11 +134,43 @@ test("add and edit a person with their role and libraries in one save", async ({
           permission_role_id: custom.id,
           access_label: custom.name,
           library_ids: body.library_ids,
+          login_methods: ["password", "oidc", "plex"],
         };
         users = [...users, created];
         return route.fulfill({ status: 201, json: created });
       }
       data = users;
+    } else if (
+      path === "/api/auth/users/reader/oidc" &&
+      request.method() === "DELETE"
+    ) {
+      deletes.push(path);
+      users[1] = {
+        ...users[1],
+        login_methods: users[1].login_methods.filter(
+          (method: string) => method !== "oidc",
+        ),
+      };
+      return route.fulfill({ status: 204 });
+    } else if (
+      path === "/api/auth/users/reader/plex" &&
+      request.method() === "DELETE"
+    ) {
+      deletes.push(path);
+      users[1] = {
+        ...users[1],
+        login_methods: users[1].login_methods.filter(
+          (method: string) => method !== "plex",
+        ),
+      };
+      return route.fulfill({ status: 204 });
+    } else if (
+      path === "/api/auth/users/reader" &&
+      request.method() === "DELETE"
+    ) {
+      deletes.push(path);
+      users = users.filter((user) => user.id !== "reader");
+      return route.fulfill({ status: 204 });
     } else if (path === "/api/auth/users/reader/permissions") {
       const body = request.postDataJSON();
       if (conflict) {
@@ -234,6 +267,33 @@ test("add and edit a person with their role and libraries in one save", async ({
   await expect(edit).toHaveCount(0);
   await expect(row).toContainText("Viewer");
   await expect(row).toContainText("No library access");
+
+  await row.getByRole("button", { name: "Edit Taylor Reader" }).click();
+  const manage = page.getByRole("dialog", { name: "Edit Taylor Reader" });
+  await expect(manage.getByText("Password · Identity provider · Plex")).toBeVisible();
+  await manage
+    .getByRole("button", { name: "Unlink identity provider" })
+    .click();
+  await manage.getByRole("button", { name: "Unlink provider" }).click();
+  await expect(manage.getByText("Password · Plex")).toBeVisible();
+  await expect(manage.getByText("Identity provider")).toHaveCount(0);
+  await manage.getByRole("button", { name: "Unlink Plex" }).click();
+  await manage.getByRole("button", { name: "Unlink provider" }).click();
+  await expect(manage.getByText("Password", { exact: true })).toBeVisible();
+  await expect(manage.getByText("Plex", { exact: true })).toHaveCount(0);
+  await manage.getByRole("button", { name: "Remove account" }).click();
+  await expect(
+    manage.getByText("Historical activity is kept.", { exact: false }),
+  ).toBeVisible();
+  await manage.getByRole("button", { name: "Remove account" }).last().click();
+  await expect(manage).toHaveCount(0);
+  await expect(row).toHaveCount(0);
+  expect(deletes).toEqual([
+    "/api/auth/users/reader/oidc",
+    "/api/auth/users/reader/plex",
+    "/api/auth/users/reader",
+  ]);
+
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
     path: testInfo.outputPath("users-access-desktop.png"),

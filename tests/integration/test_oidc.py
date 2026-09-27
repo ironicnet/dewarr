@@ -605,3 +605,56 @@ async def test_viewer_cannot_change_the_provider(client, admin):
                 },
             )
         ).status_code == 403
+
+
+async def test_admin_can_unlink_oidc_from_password_account(client, admin, database, idp):
+    created = await client.post(
+        "/api/auth/users",
+        json={
+            "username": "reader",
+            "display_name": "Existing reader",
+            "password": "a long reader password",
+            "role": "member",
+        },
+    )
+    assert created.status_code == 201, created.text
+    user_id = created.json()["id"]
+    await save_provider(client, idp, match_existing="username", auto_register=True)
+    state = await start(client, idp)
+    assert (await callback(client, state)).status_code == 303
+
+    client.cookies.clear()
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "a long test password"},
+    )
+    client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
+
+    users = (await client.get("/api/auth/users")).json()
+    reader = next(user for user in users if user["id"] == user_id)
+    assert reader["login_methods"] == ["password", "oidc"]
+
+    response = await client.delete(f"/api/auth/users/{user_id}/oidc")
+    assert response.status_code == 204, response.text
+    async with database() as db:
+        assert await db.get(OidcIdentity, user_id) is None
+
+
+async def test_oidc_only_account_cannot_unlink_its_only_sign_in(client, admin, database, idp):
+    await save_provider(client, idp, auto_register=True)
+    state = await start(client, idp)
+    assert (await callback(client, state)).status_code == 303
+    me = (await client.get("/api/auth/me")).json()["user"]
+
+    client.cookies.clear()
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "a long test password"},
+    )
+    client.headers["X-CSRF-Token"] = login.json()["csrf_token"]
+
+    response = await client.delete(f"/api/auth/users/{me['id']}/oidc")
+    assert response.status_code == 409
+    assert "another sign-in method" in response.json()["detail"]
+    async with database() as db:
+        assert await db.get(OidcIdentity, me["id"]) is not None

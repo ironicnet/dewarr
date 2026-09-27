@@ -116,3 +116,44 @@ async def test_login_budget_persists_failed_requests(client, admin):
         },
     )
     assert response.status_code == 429
+
+
+async def test_admin_can_remove_account_without_deleting_historical_user_row(client, admin, database):
+    created = await client.post(
+        "/api/auth/users",
+        json={
+            "username": "reader",
+            "display_name": "Reader",
+            "role": "member",
+            "password": "a long reader password",
+        },
+    )
+    assert created.status_code == 201, created.text
+    user_id = created.json()["id"]
+
+    removed = await client.delete(f"/api/auth/users/{user_id}")
+    assert removed.status_code == 204, removed.text
+    assert all(user["id"] != user_id for user in (await client.get("/api/auth/users")).json())
+    assert (
+        await client.post(
+            "/api/auth/login",
+            json={"username": "reader", "password": "a long reader password"},
+        )
+    ).status_code == 401
+
+    async with database() as db:
+        user = await db.get(User, user_id)
+        assert user is not None
+        assert user.active is False
+        assert user.username == f"deleted-{user.id}"
+        assert user.display_name == "Deleted user"
+        assert user.password_hash is None
+        assert user.email is None
+        assert user.onboarding["status"] == "deleted"
+
+
+async def test_admin_cannot_remove_own_account(client, admin):
+    me = (await client.get("/api/auth/me")).json()["user"]
+    response = await client.delete(f"/api/auth/users/{me['id']}")
+    assert response.status_code == 409
+    assert response.json()["detail"] == "You cannot remove your own account"
