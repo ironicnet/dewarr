@@ -607,6 +607,78 @@
         }
       }
     },
+    "/api/auth/users/{user_id}": {
+      "delete": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Delete User",
+        "operationId": "delete_user_api_auth_users__user_id__delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/users/{user_id}/oidc": {
+      "delete": {
+        "tags": [
+          "authentication"
+        ],
+        "summary": "Unlink User Oidc",
+        "operationId": "unlink_user_oidc_api_auth_users__user_id__oidc_delete",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/auth/users/{user_id}/automation": {
       "put": {
         "tags": [
@@ -39567,6 +39639,16 @@
               }
             ],
             "title": "Library Ids"
+          },
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "default": false
+          },
+          "oidc_linked": {
+            "type": "boolean",
+            "title": "Oidc Linked",
+            "default": false
           }
         },
         "type": "object",
