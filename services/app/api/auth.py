@@ -361,7 +361,9 @@ async def users(actor: CurrentUser, db: Database):
     ).all()
     oidc_users = set(
         await db.scalars(
-            select(OidcIdentity.user_id).where(OidcIdentity.user_id.in_([user.id for user in people]))
+            select(OidcIdentity.user_id).where(
+                OidcIdentity.user_id.in_([user.id for user in people])
+            )
         )
     )
     return [
@@ -424,6 +426,8 @@ async def create_user(body: UserInput, actor: CurrentUser, db: Database):
 @router.delete("/users/{user_id}/oidc", status_code=204)
 async def unlink_user_oidc(user_id: UUID, actor: CurrentUser, db: Database):
     require_user_manager(actor)
+    if actor.role != "admin":
+        raise HTTPException(403, "Only an administrator can manage sign-in methods")
     user = await db.get(User, user_id, with_for_update=True)
     if not user or (user.onboarding or {}).get("status") == "deleted":
         raise HTTPException(404, "Account not found")
@@ -450,6 +454,8 @@ async def unlink_user_oidc(user_id: UUID, actor: CurrentUser, db: Database):
 @router.delete("/users/{user_id}", status_code=204)
 async def delete_user(user_id: UUID, actor: CurrentUser, db: Database):
     require_user_manager(actor)
+    if actor.role != "admin":
+        raise HTTPException(403, "Only an administrator can remove accounts")
     if user_id == actor.id:
         raise HTTPException(409, "You cannot remove your own account")
     user = await db.get(User, user_id, with_for_update=True)
