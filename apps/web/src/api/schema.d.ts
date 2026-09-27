@@ -312,6 +312,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/auth/users/{user_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Delete User */
+    delete: operations["delete_user_api_auth_users__user_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/auth/users/{user_id}/oidc": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** Unlink User Oidc */
+    delete: operations["unlink_user_oidc_api_auth_users__user_id__oidc_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/auth/users/{user_id}/automation": {
     parameters: {
       query?: never;
@@ -10502,6 +10536,16 @@ export interface components {
       expected_role_id?: string | null;
       /** Library Ids */
       library_ids?: string[] | null;
+      /**
+       * Has Password
+       * @default false
+       */
+      has_password: boolean;
+      /**
+       * Oidc Linked
+       * @default false
+       */
+      oidc_linked: boolean;
       /** Expected Library Ids */
       expected_library_ids?: string[] | null;
     };
@@ -14776,6 +14820,64 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["UserView"];
         };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  delete_user_api_auth_users__user_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        user_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  unlink_user_oidc_api_auth_users__user_id__oidc_delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        user_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
